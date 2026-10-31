@@ -1,6 +1,10 @@
 package vista;
 
 import controlador.GestorSistema;
+import excepciones.InmuebleNoDisponibleException;
+import excepciones.ReservaNoVigenteException;
+import excepciones.ValidacionContratoException;
+import modelo.Cliente;
 
 import javax.swing.*;
 import javax.swing.border.TitledBorder;
@@ -18,7 +22,7 @@ public class PantallaPrincipal extends JFrame {
     public PantallaPrincipal() {
         gestor = new GestorSistema();
 
-        setTitle("SIGI - ULTRA Bienes Raíces (Arquitectura MVC)");
+        setTitle("SIGI - ULTRA Bienes Raíces");
         setSize(1100, 750);
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         setLocationRelativeTo(null);
@@ -137,7 +141,21 @@ public class PantallaPrincipal extends JFrame {
         pnlIzquierdo.add(new JScrollPane(tablaClientes), BorderLayout.CENTER);
 
         JButton btnActClientes = new JButton("↻ Actualizar lista");
-        pnlIzquierdo.add(btnActClientes, BorderLayout.SOUTH);
+        JButton btnOrdenarApellido = new JButton("Ordenar por apellido");
+        JTextField txtBuscarDni = new JTextField(10);
+        JButton btnBuscarDni = new JButton("Buscar DNI");
+
+        JPanel pnlAcciones = new JPanel(new GridLayout(2, 1));
+        JPanel pnlFila1 = new JPanel(new FlowLayout(FlowLayout.LEFT));
+        pnlFila1.add(btnActClientes);
+        pnlFila1.add(btnOrdenarApellido);
+        JPanel pnlFila2 = new JPanel(new FlowLayout(FlowLayout.LEFT));
+        pnlFila2.add(new JLabel("Buscar cliente por DNI:"));
+        pnlFila2.add(txtBuscarDni);
+        pnlFila2.add(btnBuscarDni);
+        pnlAcciones.add(pnlFila1);
+        pnlAcciones.add(pnlFila2);
+        pnlIzquierdo.add(pnlAcciones, BorderLayout.SOUTH);
         pnlIzquierdo.setPreferredSize(new Dimension(550, 0));
 
         btnActClientes.addActionListener(e -> {
@@ -145,6 +163,38 @@ public class PantallaPrincipal extends JFrame {
             catch (Exception ex) { JOptionPane.showMessageDialog(this, "Error BD: " + ex.getMessage()); }
         });
         btnActClientes.doClick(); // Simula click para cargar al abrir
+
+        // Algoritmo de ordenación por inserción (implementado en el controlador)
+        btnOrdenarApellido.addActionListener(e -> {
+            try { gestor.cargarClientesOrdenadosPorApellido(modClientes); }
+            catch (Exception ex) { JOptionPane.showMessageDialog(this, "Error BD: " + ex.getMessage()); }
+        });
+
+        // Algoritmo de búsqueda binaria por DNI (implementado en el controlador)
+        btnBuscarDni.addActionListener(e -> {
+            String dni = txtBuscarDni.getText().trim();
+            if (!dni.matches("\\d{7,8}")) {
+                JOptionPane.showMessageDialog(this, "Ingrese un DNI válido (7 u 8 dígitos, sin puntos).", "Advertencia", JOptionPane.WARNING_MESSAGE);
+                return;
+            }
+            try {
+                Cliente encontrado = gestor.buscarClienteEnCartera(dni);
+                if (encontrado == null) {
+                    JOptionPane.showMessageDialog(this, "No existe un cliente con DNI " + dni + ".", "Búsqueda", JOptionPane.INFORMATION_MESSAGE);
+                    return;
+                }
+                // Selecciona en la tabla la fila del cliente encontrado
+                for (int i = 0; i < modClientes.getRowCount(); i++) {
+                    if (modClientes.getValueAt(i, 1).toString().equals(encontrado.getDni())) {
+                        tablaClientes.setRowSelectionInterval(i, i);
+                        tablaClientes.scrollRectToVisible(tablaClientes.getCellRect(i, 0, true));
+                        break;
+                    }
+                }
+                JOptionPane.showMessageDialog(this, "Cliente encontrado: " + encontrado.getNombreCompleto()
+                        + "\nDNI: " + encontrado.getDni() + " - Teléfono: " + encontrado.getTelefono(), "Búsqueda", JOptionPane.INFORMATION_MESSAGE);
+            } catch (Exception ex) { JOptionPane.showMessageDialog(this, "Error BD: " + ex.getMessage()); }
+        });
 
         JPanel pnlDerecho = new JPanel(new GridBagLayout());
         pnlDerecho.setBorder(BorderFactory.createTitledBorder("2. Registrar Nuevo Cliente"));
@@ -357,7 +407,6 @@ public class PantallaPrincipal extends JFrame {
                 DateTimeFormatter formatter = DateTimeFormatter.ofPattern("dd/MM/yyyy");
                 LocalDate fechaVenc = LocalDate.parse(txtFecha.getText(), formatter);
 
-                // El Controlador hace el trabajo
                 gestor.registrarReservaBD(idInmueble, tipoReserva, monto, java.sql.Date.valueOf(fechaVenc));
 
                 JOptionPane.showMessageDialog(this, "¡Reserva registrada con éxito!", "Éxito", JOptionPane.INFORMATION_MESSAGE);
@@ -365,6 +414,9 @@ public class PantallaPrincipal extends JFrame {
                 txtMonto.setText("0.00"); txtFecha.setText("");
                 lblClienteSel.setText("[Busque un cliente por DNI]"); lblClienteSel.setForeground(Color.BLACK);
                 gestor.resetClienteSeleccionado();
+            } catch (InmuebleNoDisponibleException ex) {
+                JOptionPane.showMessageDialog(this, ex.getMessage(), "Inmueble no disponible", JOptionPane.WARNING_MESSAGE);
+                try { gestor.cargarInmueblesDisponibles(modInmuebles); } catch (Exception ignored) { } // Refresca la lista
             } catch (DateTimeParseException ex) { JOptionPane.showMessageDialog(this, "Formato de fecha inválido. Use dd/mm/yyyy", "Error", JOptionPane.ERROR_MESSAGE);
             } catch (Exception ex) { JOptionPane.showMessageDialog(this, "Error: " + ex.getMessage(), "Error", JOptionPane.ERROR_MESSAGE); }
         });
@@ -485,6 +537,13 @@ public class PantallaPrincipal extends JFrame {
                 JOptionPane.showMessageDialog(this, "¡Contrato formalizado con éxito!", "Éxito", JOptionPane.INFORMATION_MESSAGE);
                 gestor.cargarReservasVigentesBD(modReservas);
                 modPartes.setRowCount(0); txtMonto.setText("0.00"); txtInicio.setText(""); txtFin.setText("");
+            } catch (ReservaNoVigenteException ex) {
+                // La reserva ya no está vigente: se informa y se refresca la lista de reservas
+                JOptionPane.showMessageDialog(this, ex.getMessage(), "Reserva no vigente", JOptionPane.WARNING_MESSAGE);
+                try { gestor.cargarReservasVigentesBD(modReservas); } catch (Exception ignored) { }
+            } catch (ValidacionContratoException ex) {
+                // Condiciones o partes del contrato inválidas: el usuario corrige los datos
+                JOptionPane.showMessageDialog(this, ex.getMessage(), "Validación del contrato", JOptionPane.WARNING_MESSAGE);
             } catch (Exception ex) { JOptionPane.showMessageDialog(this, "Error al formalizar: " + ex.getMessage(), "Error", JOptionPane.ERROR_MESSAGE); }
         });
 
